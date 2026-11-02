@@ -1,0 +1,810 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 0.2.0
+  description: >
+    Institution-authenticated semantic integration. Demo preparation/reset
+    remain unmounted. Semantic mutations require an institution-scoped enabled flag,
+    authenticated membership and the documented role. Missing flag means OFF.
+servers: [{url: /api}]
+paths: {}
+components:
+  securitySchemes:
+    ClerkSession:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Clerk verified session; browser sessions may use Clerk session cookies.
+  parameters:
+    InstitutionId: {name: institutionId, in: path, required: true, schema: {type: string, format: uuid}}
+    AnalysisId: {name: analysisId, in: path, required: true, schema: {type: string, format: uuid}}
+    StepId: {name: stepId, in: path, required: true, schema: {type: string, format: uuid}}
+    CandidateId: {name: candidateId, in: path, required: true, schema: {type: string, format: uuid}}
+    ReferenceFilter: {name: officialReferenceId, in: query, schema: {type: string, format: uuid}}
+    DatasetFilter: {name: datasetScope, in: query, schema: {type: string, maxLength: 160}}
+  responses:
+    BadRequest: {description: Invalid input or pair not belonging to the same institution, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticProblem"}}}}
+    Unauthorized: {description: Verified Clerk session required, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticProblem"}}}}
+    Forbidden: {description: "Membership, role or institution feature flag does not permit this operation", content: {application/json: {schema: {$ref: "#/components/schemas/SemanticProblem"}}}}
+    NotFound: {description: Entity unavailable within the authorized institution, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticProblem"}}}}
+    Conflict: {description: "Invalid state, duplicate decision, stale coverage or unresolved older observations", content: {application/json: {schema: {$ref: "#/components/schemas/SemanticProblem"}}}}
+    Unavailable: {description: Provider not configured or temporarily unavailable; never a fabricated successful result, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticProblem"}}}}
+  pathItems:
+    AuditEvents:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      get:
+        operationId: listInstitutionAuditEvents
+        security: [{ClerkSession: []}]
+        tags: [institutions]
+        description: Read-only committed audit events for tenant_admin and auditor members. Raw metadata, reasons and content are never returned.
+        parameters:
+          - {name: from, in: query, schema: {type: string, format: date-time}}
+          - {name: to, in: query, schema: {type: string, format: date-time}}
+          - {name: action, in: query, schema: {type: string, maxLength: 120}}
+          - {name: entityKind, in: query, schema: {type: string, maxLength: 80}}
+          - {name: entityId, in: query, schema: {type: string, format: uuid}}
+          - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+          - {name: offset, in: query, schema: {type: integer, minimum: 0, maximum: 100000, default: 0}}
+        responses:
+          "200": {description: Institution-scoped committed audit events, content: {application/json: {schema: {$ref: "#/components/schemas/AuditEventsPage"}}}}
+          "400": {$ref: "#/components/responses/BadRequest"}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+    InstitutionAnalytics:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      get:
+        operationId: getInstitutionAnalytics
+        security: [{ClerkSession: []}]
+        tags: [institutions]
+        description: Tenant-admin and auditor read-only aggregate report; excludes demo records and never returns source content.
+        parameters:
+          - {name: days, in: query, required: true, schema: {type: integer, enum: [30, 90, 365]}}
+        responses:
+          "200": {description: Institution-scoped aggregate analytics, content: {application/json: {schema: {$ref: "#/components/schemas/InstitutionAnalytics"}}}}
+          "400": {$ref: "#/components/responses/BadRequest"}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+    Capabilities:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      get:
+        operationId: getSemanticCapabilities
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: Any institution member. Read-only; no provider secrets returned.
+        responses:
+          "200": {description: Flag and provider readiness are independent, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticCapabilities"}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+    ReferenceObservations:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      get:
+        operationId: listReferenceObservations
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: Any member; scoped to this institution only.
+        parameters: [{$ref: "#/components/parameters/ReferenceFilter"}, {$ref: "#/components/parameters/DatasetFilter"}]
+        responses:
+          "200": {description: Explicitly linked reference/content pairs, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/ReferenceObservation"}}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+      post:
+        operationId: createReferenceObservation
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: tenant_admin or analyst; feature flag required. Server derives actor and dataset scope.
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/ReferenceObservationInput"}}}}
+        responses:
+          "201": {description: Linked pair, content: {application/json: {schema: {$ref: "#/components/schemas/ReferenceObservation"}}}}
+          "400": {$ref: "#/components/responses/BadRequest"}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+          "409": {$ref: "#/components/responses/Conflict"}
+    Analyses:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      get:
+        operationId: listSemanticAnalyses
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        parameters: [{$ref: "#/components/parameters/ReferenceFilter"}, {$ref: "#/components/parameters/DatasetFilter"}]
+        responses:
+          "200": {description: Institution analysis history; any member, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/SemanticAnalysis"}}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+      post:
+        operationId: createSemanticAnalysis
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: >
+          tenant_admin or analyst; flag required. Server takes exact snapshots,
+          computes hash and selects engine version. Identical input returns the
+          existing record, never overwrites it. No external provider call inside the transaction.
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticAnalysisInput"}}}}
+        responses:
+          "202": {description: New analysis queued, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticAnalysis"}}}}
+          "200": {description: Existing identical analysis, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticAnalysis"}}}}
+          "400": {$ref: "#/components/responses/BadRequest"}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+          "409": {$ref: "#/components/responses/Conflict"}
+          "503": {$ref: "#/components/responses/Unavailable"}
+    AnalysisDetail:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}, {$ref: "#/components/parameters/AnalysisId"}]
+      get:
+        operationId: getSemanticAnalysis
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        responses:
+          "200": {description: "Exact historical inputs, machine result and human review; any member", content: {application/json: {schema: {$ref: "#/components/schemas/SemanticAnalysis"}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+          "404": {$ref: "#/components/responses/NotFound"}
+    AnalysisRetry:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}, {$ref: "#/components/parameters/AnalysisId"}]
+      post:
+        operationId: retrySemanticAnalysis
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: tenant_admin or analyst; flag required. Only failed jobs; retains immutable inputs and record ID.
+        responses:
+          "202": {description: Same analysis requeued, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticAnalysis"}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+          "404": {$ref: "#/components/responses/NotFound"}
+          "409": {$ref: "#/components/responses/Conflict"}
+          "503": {$ref: "#/components/responses/Unavailable"}
+    AnalysisReview:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}, {$ref: "#/components/parameters/AnalysisId"}]
+      post:
+        operationId: createSemanticReviewStep
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: >
+          tenant_admin; flag required. Case must match the analysis pair.
+          Eligible reviewer/administrator must not be requestedBy.
+          Uses marjea_review_steps, not an independent review engine.
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticReviewStepInput"}}}}
+        responses:
+          "201": {description: Reviewer assigned in current round, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticReviewStep"}}}}
+          "400": {$ref: "#/components/responses/BadRequest"}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+          "404": {$ref: "#/components/responses/NotFound"}
+          "409": {$ref: "#/components/responses/Conflict"}
+    AnalysisDecision:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}, {$ref: "#/components/parameters/AnalysisId"}, {$ref: "#/components/parameters/StepId"}]
+      post:
+        operationId: submitSemanticReviewDecision
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: >
+          Assigned reviewer or assigned tenant_admin; flag required and requester
+          self-review prohibited. Atomic step decision and analysis status update.
+          Never approves a response draft or closes a case.
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticReviewDecisionInput"}}}}
+        responses:
+          "200": {description: Recorded review decision, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticReviewStep"}}}}
+          "400": {$ref: "#/components/responses/BadRequest"}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+          "404": {$ref: "#/components/responses/NotFound"}
+          "409": {$ref: "#/components/responses/Conflict"}
+    AnalysisResubmit:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}, {$ref: "#/components/parameters/AnalysisId"}]
+      post:
+        operationId: resubmitSemanticAnalysis
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: tenant_admin or analyst; flag required. Revision-requested only; new review round preserving earlier decisions and machine result.
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticResubmissionInput"}}}}
+        responses:
+          "200": {description: Resubmitted analysis, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticAnalysis"}}}}
+          "400": {$ref: "#/components/responses/BadRequest"}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+          "404": {$ref: "#/components/responses/NotFound"}
+          "409": {$ref: "#/components/responses/Conflict"}
+    Deviations:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      get:
+        operationId: listFirstObservedDeviations
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        parameters: [{$ref: "#/components/parameters/ReferenceFilter"}, {$ref: "#/components/parameters/DatasetFilter"}]
+        description: Any member. Never claims first on the internet.
+        responses:
+          "200": {description: Candidates and historical decisions, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/FirstObservedDeviation"}}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+    DeviationConfirm:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}, {$ref: "#/components/parameters/CandidateId"}]
+      post:
+        operationId: confirmFirstObservedDeviation
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: >
+          tenant_admin or reviewer; flag required. Human confirmation after locking
+          and revalidating all older eligible observations for this reference
+          version/dataset/engine. Unresolved, failed or stale older analyses block.
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/DeviationDecisionInput"}}}}
+        responses:
+          "200": {description: Human-confirmed coverage, content: {application/json: {schema: {$ref: "#/components/schemas/FirstObservedDeviation"}}}}
+          "400": {$ref: "#/components/responses/BadRequest"}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+          "404": {$ref: "#/components/responses/NotFound"}
+          "409": {$ref: "#/components/responses/Conflict"}
+    DeviationReject:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}, {$ref: "#/components/parameters/CandidateId"}]
+      post:
+        operationId: rejectFirstObservedDeviation
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: tenant_admin or reviewer; flag required. Rejection is not proof that an older observation has no deviation.
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/DeviationDecisionInput"}}}}
+        responses:
+          "200": {description: Human-rejected candidate, content: {application/json: {schema: {$ref: "#/components/schemas/FirstObservedDeviation"}}}}
+          "400": {$ref: "#/components/responses/BadRequest"}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+          "404": {$ref: "#/components/responses/NotFound"}
+          "409": {$ref: "#/components/responses/Conflict"}
+    DemoPrepare:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      post:
+        operationId: prepareOfuqDemo
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: tenant_admin only; flag required. Explicit preparation, never startup seeding.
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/DemoPreparationInput"}}}}
+        responses:
+          "200": {description: Idempotently prepared current scenario generation, content: {application/json: {schema: {$ref: "#/components/schemas/DemoScenario"}}}}
+          "400": {$ref: "#/components/responses/BadRequest"}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+          "409": {$ref: "#/components/responses/Conflict"}
+    DemoReset:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      post:
+        operationId: resetOfuqDemo
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: >
+          tenant_admin only; flag required. Archive generated state for exactly
+          this scenario, retain base inputs, invalidate old leases, increment
+          generation and append audit event. Never reset unrelated simulated data.
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/DemoResetInput"}}}}
+        responses:
+          "200": {description: New scenario generation, content: {application/json: {schema: {$ref: "#/components/schemas/DemoScenario"}}}}
+          "400": {$ref: "#/components/responses/BadRequest"}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+          "404": {$ref: "#/components/responses/NotFound"}
+          "409": {$ref: "#/components/responses/Conflict"}
+    ClaimWorkspace:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      get:
+        operationId: getClaimWorkspace
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        description: Institution-scoped claim topics, records, variants, observed links, and evidence lineage. Chronology and similarity are not proof of propagation.
+        responses:
+          "200": {description: Claim workspace, content: {application/json: {schema: {$ref: "#/components/schemas/ClaimWorkspace"}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+    CreateClaimTopic:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      post:
+        operationId: createClaimTopic
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateClaimTopicInput"}}}}
+        responses:
+          "201": {description: Topic, content: {application/json: {schema: {$ref: "#/components/schemas/ClaimTopic"}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+    CreateClaim:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      post:
+        operationId: createClaim
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateClaimInput"}}}}
+        responses:
+          "201": {description: Claim, content: {application/json: {schema: {$ref: "#/components/schemas/ClaimRecord"}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+    CreateClaimVariant:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}, {name: claimId, in: path, required: true, schema: {type: string, format: uuid}}]
+      post:
+        operationId: createClaimVariant
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateClaimVariantInput"}}}}
+        responses:
+          "201": {description: Variant, content: {application/json: {schema: {$ref: "#/components/schemas/ClaimVariant"}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+    LinkClaimObservation:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      post:
+        operationId: linkClaimObservation
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/LinkClaimObservationInput"}}}}
+        responses:
+          "201": {description: Manually linked observation, content: {application/json: {schema: {$ref: "#/components/schemas/ClaimObservation"}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+    CreateClaimLineage:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      post:
+        operationId: createClaimLineage
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateClaimLineageInput"}}}}
+        responses:
+          "201": {description: Human-recorded lineage edge, content: {application/json: {schema: {$ref: "#/components/schemas/ClaimLineage"}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+    CreateClaimEvidence:
+      parameters: [{$ref: "#/components/parameters/InstitutionId"}]
+      post:
+        operationId: createClaimEvidence
+        security: [{ClerkSession: []}]
+        tags: [semantic]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/CreateClaimEvidenceInput"}}}}
+        responses:
+          "201": {description: Evidence reference, content: {application/json: {schema: {$ref: "#/components/schemas/ClaimEvidence"}}}}
+          "401": {$ref: "#/components/responses/Unauthorized"}
+          "403": {$ref: "#/components/responses/Forbidden"}
+  schemas:
+    ClaimTopic:
+      type: object
+      required: [id, institutionId, title, normalizedKey, createdBy, createdAt, archivedAt]
+      properties:
+        id: {type: string, format: uuid}
+        institutionId: {type: string, format: uuid}
+        title: {type: string}
+        normalizedKey: {type: string}
+        createdBy: {type: string}
+        createdAt: {type: string, format: date-time}
+        archivedAt: {type: [string, "null"], format: date-time}
+    ClaimRecord:
+      type: object
+      required: [id, institutionId, topicId, canonicalText, createdBy, createdAt, archivedAt]
+      properties:
+        id: {type: string, format: uuid}
+        institutionId: {type: string, format: uuid}
+        topicId: {type: string, format: uuid}
+        canonicalText: {type: string}
+        createdBy: {type: string}
+        createdAt: {type: string, format: date-time}
+        archivedAt: {type: [string, "null"], format: date-time}
+    ClaimVariant:
+      type: object
+      required: [id, institutionId, claimId, variantText, language, createdBy, createdAt, archivedAt]
+      properties:
+        id: {type: string, format: uuid}
+        institutionId: {type: string, format: uuid}
+        claimId: {type: string, format: uuid}
+        variantText: {type: string}
+        language: {type: string, enum: [ar, en, und]}
+        createdBy: {type: string}
+        createdAt: {type: string, format: date-time}
+        archivedAt: {type: [string, "null"], format: date-time}
+    ClaimObservation:
+      type: object
+      required: [id, institutionId, variantId, observedContentId, datasetScope, relation, observedAt, recordedBy, recordedAt]
+      properties:
+        id: {type: string, format: uuid}
+        institutionId: {type: string, format: uuid}
+        variantId: {type: string, format: uuid}
+        observedContentId: {type: string, format: uuid}
+        datasetScope: {type: string, enum: [ordinary, simulated]}
+        relation: {type: string, enum: [related, similar, quotes, contradicts]}
+        observedAt: {type: string, format: date-time}
+        recordedBy: {type: string}
+        recordedAt: {type: string, format: date-time}
+    ClaimLineage:
+      type: object
+      required: [id, institutionId, fromVariantId, toVariantId, relation, evidenceId, reason, recordedBy, recordedAt]
+      properties:
+        id: {type: string, format: uuid}
+        institutionId: {type: string, format: uuid}
+        fromVariantId: {type: string, format: uuid}
+        toVariantId: {type: string, format: uuid}
+        relation: {type: string, enum: [chronology, similarity, confirmed_propagation]}
+        evidenceId: {type: [string, "null"], format: uuid}
+        reason: {type: string}
+        recordedBy: {type: string}
+        recordedAt: {type: string, format: date-time}
+    ClaimWorkspace:
+      type: object
+      required: [topics, claims, variants, observations, lineage, evidence]
+      properties:
+        topics: {type: array, items: {$ref: "#/components/schemas/ClaimTopic"}}
+        claims: {type: array, items: {$ref: "#/components/schemas/ClaimRecord"}}
+        variants: {type: array, items: {$ref: "#/components/schemas/ClaimVariant"}}
+        observations: {type: array, items: {$ref: "#/components/schemas/ClaimObservation"}}
+        lineage: {type: array, items: {$ref: "#/components/schemas/ClaimLineage"}}
+        evidence: {type: array, items: {$ref: "#/components/schemas/ClaimEvidence"}}
+    ClaimEvidence:
+      type: object
+      required: [id, institutionId, claimId, referenceId, referenceVersionNumber, observedContentId, caseId, semanticAnalysisId, note, recordedBy, recordedAt]
+      properties:
+        id: {type: string, format: uuid}
+        institutionId: {type: string, format: uuid}
+        claimId: {type: string, format: uuid}
+        referenceId: {type: [string, "null"], format: uuid}
+        referenceVersionNumber: {type: [integer, "null"]}
+        observedContentId: {type: [string, "null"], format: uuid}
+        caseId: {type: [string, "null"], format: uuid}
+        semanticAnalysisId: {type: [string, "null"], format: uuid}
+        note: {type: [string, "null"]}
+        recordedBy: {type: string}
+        recordedAt: {type: string, format: date-time}
+    CreateClaimTopicInput:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 180}
+    CreateClaimInput:
+      type: object
+      additionalProperties: false
+      required: [topicId, canonicalText]
+      properties:
+        topicId: {type: string, format: uuid}
+        canonicalText: {type: string, minLength: 1, maxLength: 4000}
+    CreateClaimVariantInput:
+      type: object
+      additionalProperties: false
+      required: [variantText, language]
+      properties:
+        variantText: {type: string, minLength: 1, maxLength: 4000}
+        language: {type: string, enum: [ar, en, und]}
+    LinkClaimObservationInput:
+      type: object
+      additionalProperties: false
+      required: [variantId, observedContentId, relation]
+      properties:
+        variantId: {type: string, format: uuid}
+        observedContentId: {type: string, format: uuid}
+        relation: {type: string, enum: [related, similar, quotes, contradicts]}
+    CreateClaimLineageInput:
+      type: object
+      additionalProperties: false
+      required: [fromVariantId, toVariantId, relation, evidenceId, reason]
+      properties:
+        fromVariantId: {type: string, format: uuid}
+        toVariantId: {type: string, format: uuid}
+        relation: {type: string, enum: [chronology, similarity, confirmed_propagation]}
+        evidenceId: {type: [string, "null"], format: uuid}
+        reason: {type: string, minLength: 1, maxLength: 2000}
+    CreateClaimEvidenceInput:
+      type: object
+      additionalProperties: false
+      required: [claimId, targetType, targetId, referenceVersionNumber, note]
+      properties:
+        claimId: {type: string, format: uuid}
+        targetType: {type: string, enum: [reference_version, observed_content, case, semantic_analysis]}
+        targetId: {type: string, format: uuid}
+        referenceVersionNumber: {type: [integer, "null"], minimum: 1}
+        note: {type: [string, "null"], maxLength: 2000}
+    SemanticProblem:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message: {type: string}
+    SemanticCapabilities:
+      type: object
+      additionalProperties: false
+      required: [phase2SemanticAnalysisEnabled, providerReady, engineVersion, semanticAttemptLimit, semanticAttemptsReserved]
+      properties:
+        phase2SemanticAnalysisEnabled: {type: boolean}
+        providerReady: {type: boolean}
+        engineVersion: {type: [string, "null"]}
+        semanticAttemptLimit: {type: integer, minimum: 1, maximum: 100000}
+        semanticAttemptsReserved: {type: integer, minimum: 0}
+    ReferenceObservationInput:
+      type: object
+      additionalProperties: false
+      required: [officialReferenceId, officialReferenceVersionNumber, observedContentId]
+      properties:
+        officialReferenceId: {type: string, format: uuid}
+        officialReferenceVersionNumber: {type: integer, minimum: 1}
+        observedContentId: {type: string, format: uuid}
+    ReferenceObservation:
+      type: object
+      additionalProperties: false
+      required: [id, institutionId, officialReferenceId, officialReferenceVersionNumber, observedContentId, datasetScope, eligibilityStatus, linkedBy, linkedAt, excludedBy, excludedAt, exclusionReason, demoScenarioId, demoGeneration]
+      properties:
+        id: {type: string, format: uuid}
+        institutionId: {type: string, format: uuid}
+        officialReferenceId: {type: string, format: uuid}
+        officialReferenceVersionNumber: {type: integer, minimum: 1}
+        observedContentId: {type: string, format: uuid}
+        datasetScope: {type: string}
+        eligibilityStatus: {type: string, enum: [eligible, excluded]}
+        linkedBy: {type: string}
+        linkedAt: {type: string, format: date-time}
+        excludedBy: {type: [string, "null"]}
+        excludedAt: {type: [string, "null"], format: date-time}
+        exclusionReason: {type: [string, "null"]}
+        demoScenarioId: {type: [string, "null"], format: uuid}
+        demoGeneration: {type: [integer, "null"], minimum: 1}
+    SemanticAnalysisInput:
+      type: object
+      additionalProperties: false
+      required: [officialReferenceId, officialReferenceVersionNumber, observedContentId, caseId]
+      properties:
+        officialReferenceId: {type: string, format: uuid}
+        officialReferenceVersionNumber: {type: integer, minimum: 1}
+        observedContentId: {type: string, format: uuid}
+        caseId: {type: [string, "null"], format: uuid}
+    OfficialReferenceSnapshot:
+      type: object
+      additionalProperties: false
+      required: [id, versionNumber, title, issuingEntity, sourceUrl, publishedAt, status, verificationStatus, contentText]
+      properties:
+        id: {type: string, format: uuid}
+        versionNumber: {type: integer, minimum: 1}
+        title: {type: string}
+        issuingEntity: {type: string}
+        sourceUrl: {type: string}
+        publishedAt: {type: [string, "null"], format: date-time}
+        status: {type: string, enum: [sari, muaddal, mulgha]}
+        verificationStatus: {type: string}
+        contentText: {type: string, minLength: 1, maxLength: 20000}
+    ObservedContentSnapshot:
+      type: object
+      additionalProperties: false
+      required: [id, sourceId, sourceName, sourceUrl, observedUrl, sourceObservedAt, firstCapturedAt, captureMode, isSimulated, contentText]
+      properties:
+        id: {type: string, format: uuid}
+        sourceId: {type: string, format: uuid}
+        sourceName: {type: string}
+        sourceUrl: {type: [string, "null"]}
+        observedUrl: {type: [string, "null"]}
+        sourceObservedAt: {type: [string, "null"], format: date-time}
+        firstCapturedAt: {type: string, format: date-time}
+        captureMode: {type: string, enum: [manual_submission, rss_local_test]}
+        isSimulated: {type: boolean}
+        contentText: {type: string, minLength: 1, maxLength: 20000}
+    SemanticFinding:
+      type: object
+      additionalProperties: false
+      required: [type, official_quote, observed_quote, explanation, confidence]
+      properties:
+        type: {type: string, enum: [scope_change, temporal_change, added_claim, omitted_claim, contradiction]}
+        official_quote: {type: [string, "null"], maxLength: 4000}
+        observed_quote: {type: [string, "null"], maxLength: 4000}
+        explanation: {type: string, minLength: 1, maxLength: 2000}
+        confidence: {type: number, minimum: 0, maximum: 1}
+    SemanticResult:
+      type: object
+      additionalProperties: false
+      required: [schema_version, language, summary, material_deviation, deviation_types, findings, suggested_route, confidence, limitations]
+      properties:
+        schema_version: {type: string, enum: [semantic-v1]}
+        language: {type: string, enum: [ar, en]}
+        summary: {type: string, minLength: 1, maxLength: 3000}
+        material_deviation: {type: boolean}
+        deviation_types:
+          type: array
+          maxItems: 5
+          items: {type: string, enum: [scope_change, temporal_change, added_claim, omitted_claim, contradiction]}
+        findings: {type: array, maxItems: 20, items: {$ref: "#/components/schemas/SemanticFinding"}}
+        suggested_route: {type: string, enum: [no_material_deviation, human_review, escalation_recommended, insufficient_evidence]}
+        confidence: {type: number, minimum: 0, maximum: 1}
+        limitations: {type: array, maxItems: 10, items: {type: string, minLength: 1, maxLength: 1000}}
+    HumanSemanticAssessment:
+      type: object
+      additionalProperties: false
+      required: [materialDeviation, suggestedRoute, rationale]
+      properties:
+        materialDeviation: {type: boolean}
+        suggestedRoute: {type: string, enum: [no_material_deviation, human_review, escalation_recommended, insufficient_evidence]}
+        rationale: {type: string, minLength: 1, maxLength: 4000}
+    SemanticAnalysis:
+      type: object
+      additionalProperties: false
+      required: [id, institutionId, officialReferenceId, officialReferenceVersionNumber, observedContentId, caseId, requestedBy, analysisStatus, engineVersion, model, schemaVersion, promptVersion, datasetScope, analyzedAt, reviewedBy, reviewedAt, suggestedRoute, confidence, structuredResult, officialReferenceSnapshot, observedContentSnapshot, inputHash, reviewedResult, reviewRound, attemptCount, errorCode, failedAt, demoScenarioId, demoGeneration, createdAt, updatedAt, archivedAt, reviewSteps]
+      properties:
+        id: {type: string, format: uuid}
+        institutionId: {type: string, format: uuid}
+        officialReferenceId: {type: string, format: uuid}
+        officialReferenceVersionNumber: {type: integer, minimum: 1}
+        observedContentId: {type: string, format: uuid}
+        caseId: {type: [string, "null"], format: uuid}
+        requestedBy: {type: string}
+        analysisStatus: {type: string, enum: [queued, processing, pending_human_review, approved, revision_requested, rejected, escalated, failed]}
+        engineVersion: {type: string}
+        model: {type: string}
+        schemaVersion: {type: string}
+        promptVersion: {type: string}
+        datasetScope: {type: string}
+        analyzedAt: {type: [string, "null"], format: date-time}
+        reviewedBy: {type: [string, "null"]}
+        reviewedAt: {type: [string, "null"], format: date-time}
+        suggestedRoute: {type: [string, "null"], enum: [no_material_deviation, human_review, escalation_recommended, insufficient_evidence, null]}
+        confidence: {type: [number, "null"], minimum: 0, maximum: 1}
+        structuredResult: {anyOf: [{$ref: "#/components/schemas/SemanticResult"}, {type: "null"}]}
+        officialReferenceSnapshot: {$ref: "#/components/schemas/OfficialReferenceSnapshot"}
+        observedContentSnapshot: {$ref: "#/components/schemas/ObservedContentSnapshot"}
+        inputHash: {type: string, pattern: "^[0-9a-f]{64}$"}
+        reviewedResult: {anyOf: [{$ref: "#/components/schemas/HumanSemanticAssessment"}, {type: "null"}]}
+        reviewRound: {type: integer, minimum: 1}
+        attemptCount: {type: integer, minimum: 0}
+        errorCode: {type: [string, "null"]}
+        failedAt: {type: [string, "null"], format: date-time}
+        demoScenarioId: {type: [string, "null"], format: uuid}
+        demoGeneration: {type: [integer, "null"], minimum: 1}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        archivedAt: {type: [string, "null"], format: date-time}
+        reviewSteps: {type: array, items: {$ref: "#/components/schemas/SemanticReviewStep"}}
+    SemanticReviewStepInput:
+      type: object
+      additionalProperties: false
+      required: [caseId, reviewerClerkUserId, sequenceNumber]
+      properties:
+        caseId: {type: string, format: uuid}
+        reviewerClerkUserId: {type: string, minLength: 5, maxLength: 255}
+        sequenceNumber: {type: integer, minimum: 1}
+    SemanticReviewStep:
+      type: object
+      additionalProperties: false
+      required: [id, caseId, targetKind, semanticAnalysisId, reviewRound, sequenceNumber, reviewerClerkUserId, decision, note, decidedAt]
+      properties:
+        id: {type: string, format: uuid}
+        caseId: {type: string, format: uuid}
+        targetKind: {type: string, enum: [semantic_analysis]}
+        semanticAnalysisId: {type: string, format: uuid}
+        reviewRound: {type: integer, minimum: 1}
+        sequenceNumber: {type: integer, minimum: 1}
+        reviewerClerkUserId: {type: string}
+        decision: {type: [string, "null"], enum: [approve, request_revision, reject, escalate, null]}
+        note: {type: [string, "null"], maxLength: 4000}
+        decidedAt: {type: [string, "null"], format: date-time}
+    SemanticReviewDecisionInput:
+      type: object
+      additionalProperties: false
+      required: [decision, note, reviewedResult]
+      properties:
+        decision: {type: string, enum: [approve, request_revision, reject, escalate]}
+        note: {type: string, minLength: 1, maxLength: 4000}
+        reviewedResult: {$ref: "#/components/schemas/HumanSemanticAssessment"}
+    SemanticResubmissionInput:
+      type: object
+      additionalProperties: false
+      required: [reason, reviewedResult]
+      properties:
+        reason: {type: string, minLength: 1, maxLength: 4000}
+        reviewedResult: {$ref: "#/components/schemas/HumanSemanticAssessment"}
+    DeviationDecisionInput:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: {type: string, minLength: 1, maxLength: 4000}
+    FirstObservedDeviation:
+      type: object
+      additionalProperties: false
+      required: [id, institutionId, officialReferenceId, officialReferenceVersionNumber, observedContentId, semanticAnalysisId, datasetScope, engineVersion, status, label, observedOrderAt, coverageSnapshot, coverageHash, nominatedBy, decidedBy, decidedAt, decisionReason, createdAt, supersededAt, archivedAt, demoScenarioId, demoGeneration]
+      properties:
+        id: {type: string, format: uuid}
+        institutionId: {type: string, format: uuid}
+        officialReferenceId: {type: string, format: uuid}
+        officialReferenceVersionNumber: {type: integer, minimum: 1}
+        observedContentId: {type: string, format: uuid}
+        semanticAnalysisId: {type: string, format: uuid}
+        datasetScope: {type: string}
+        engineVersion: {type: string}
+        status: {type: string, enum: [candidate, confirmed, rejected]}
+        label: {type: string, enum: ["أول انحراف مرصود ضمن البيانات المتاحة في مَرْجِع"]}
+        observedOrderAt: {type: string, format: date-time}
+        coverageSnapshot: {anyOf: [{$ref: "#/components/schemas/DeviationCoverage"}, {type: "null"}]}
+        coverageHash: {type: [string, "null"], pattern: "^[0-9a-f]{64}$"}
+        nominatedBy: {type: string}
+        decidedBy: {type: [string, "null"]}
+        decidedAt: {type: [string, "null"], format: date-time}
+        decisionReason: {type: [string, "null"]}
+        createdAt: {type: string, format: date-time}
+        supersededAt: {type: [string, "null"], format: date-time}
+        archivedAt: {type: [string, "null"], format: date-time}
+        demoScenarioId: {type: [string, "null"], format: uuid}
+        demoGeneration: {type: [integer, "null"], minimum: 1}
+    DeviationCoverage:
+      type: object
+      additionalProperties: false
+      required: [checkedAt, observationIds, analysisIds, inputHashes, tiedObservationIds]
+      properties:
+        checkedAt: {type: string, format: date-time}
+        observationIds: {type: array, items: {type: string, format: uuid}}
+        analysisIds: {type: array, items: {type: string, format: uuid}}
+        inputHashes: {type: array, items: {type: string, pattern: "^[0-9a-f]{64}$"}}
+        tiedObservationIds: {type: array, items: {type: string, format: uuid}}
+    DemoPreparationInput:
+      type: object
+      additionalProperties: false
+      required: [confirm]
+      properties:
+        confirm: {type: boolean, enum: [true]}
+    DemoResetInput:
+      type: object
+      additionalProperties: false
+      required: [confirm, expectedGeneration, reason]
+      properties:
+        confirm: {type: boolean, enum: [true]}
+        expectedGeneration: {type: integer, minimum: 1}
+        reason: {type: string, minLength: 1, maxLength: 4000}
+    DemoScenario:
+      type: object
+      additionalProperties: false
+      required: [id, institutionId, scenarioKey, generation, referenceId, observedContentIds, createdAt, updatedAt]
+      properties:
+        id: {type: string, format: uuid}
+        institutionId: {type: string, format: uuid}
+        scenarioKey: {type: string, enum: [ofuq-v1]}
+        generation: {type: integer, minimum: 1}
+        referenceId: {type: string, format: uuid}
+        observedContentIds: {type: array, items: {type: string, format: uuid}}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    InstitutionAnalytics:
+      type: object
+      additionalProperties: false
+      required: [periodStart, periodEnd, totals, activityByMonth]
+      properties:
+        periodStart: {type: string, format: date-time}
+        periodEnd: {type: string, format: date-time}
+        totals:
+          type: object
+          additionalProperties: false
+          required: [activeReferences, observations, activeClaims, openCases, pendingReviewCases, approvedCases, referredCases, decisions, completedAnalyses, failedAnalyses, confirmedDeviations]
+          properties:
+            activeReferences: {type: integer, minimum: 0}
+            observations: {type: integer, minimum: 0}
+            activeClaims: {type: integer, minimum: 0}
+            openCases: {type: integer, minimum: 0}
+            pendingReviewCases: {type: integer, minimum: 0}
+            approvedCases: {type: integer, minimum: 0}
+            referredCases: {type: integer, minimum: 0}
+            decisions: {type: integer, minimum: 0}
+            completedAnalyses: {type: integer, minimum: 0}
+            failedAnalyses: {type: integer, minimum: 0}
+            confirmedDeviations: {type: integer, minimum: 0}
+        activityByMonth:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [month, references, observations, claims, cases]
+            properties:
+              month: {type: string, pattern: "^[0-9]{4}-[0-9]{2}$"}
+              references: {type: integer, minimum: 0}
+              observations: {type: integer, minimum: 0}
+              claims: {type: integer, minimum: 0}
+              cases: {type: integer, minimum: 0}
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required: [id, actorId, action, entityKind, entityId, createdAt, metadata]
+      properties:
+        id: {type: string, format: uuid}
+        actorId: {type: string}
+        action: {type: string}
+        entityKind: {type: string}
+        entityId: {type: string, format: uuid}
+        createdAt: {type: string, format: date-time}
+        metadata: {type: object, additionalProperties: true}
+    AuditEventsPage:
+      type: object
+      additionalProperties: false
+      required: [events, hasMore, nextOffset]
+      properties:
+        events: {type: array, items: {$ref: "#/components/schemas/AuditEvent"}}
+        hasMore: {type: boolean}
+        nextOffset: {type: [integer, "null"], minimum: 0}

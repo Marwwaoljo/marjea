@@ -1,0 +1,238 @@
+openapi: 3.1.0
+info: {title: Api, version: 0.3.0}
+paths: {}
+components:
+  schemas:
+    WorkspaceReferenceInput:
+      type: object
+      additionalProperties: false
+      required: [title, contentText, postUrl]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 160}
+        contentText: {type: string, minLength: 1, maxLength: 20000}
+        postUrl: {type: string, minLength: 1, maxLength: 2048}
+        expectedVersion: {type: integer, minimum: 1}
+    WorkspacePostInput:
+      type: object
+      additionalProperties: false
+      required: [contentText, postUrl, classification]
+      properties:
+        contentText: {type: string, minLength: 1, maxLength: 20000}
+        postUrl: {type: string, minLength: 1, maxLength: 2048}
+        classification: {type: string, enum: [unclassified, potential-discrepancy, supportive-circulation]}
+        expectedVersion: {type: integer, minimum: 1}
+    WorkspaceArchiveInput:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion]
+      properties:
+        expectedVersion: {type: integer, minimum: 1}
+    WorkspaceReference:
+      type: object
+      required: [id, title, contentText, postUrl, versionNumber, savedAt]
+      properties:
+        id: {type: string, format: uuid}
+        title: {type: string}
+        contentText: {type: string}
+        postUrl: {type: string}
+        versionNumber: {type: integer}
+        savedAt: {type: string, format: date-time}
+    WorkspacePost:
+      type: object
+      required: [id, sourceId, contentText, postUrl, classification, versionNumber, savedAt]
+      properties:
+        id: {type: string, format: uuid}
+        sourceId: {type: string, format: uuid}
+        contentText: {type: string}
+        postUrl: {type: string}
+        classification: {type: string, enum: [unclassified, potential-discrepancy, supportive-circulation]}
+        versionNumber: {type: integer}
+        savedAt: {type: string, format: date-time}
+    WorkspaceRecords:
+      type: object
+      required: [references, posts]
+      properties:
+        references: {type: array, items: {$ref: "#/components/schemas/WorkspaceReference"}}
+        posts: {type: array, items: {$ref: "#/components/schemas/WorkspacePost"}}
+    WorkspaceArchiveResult:
+      type: object
+      required: [id, archivedAt]
+      properties:
+        id: {type: string, format: uuid}
+        archivedAt: {type: string, format: date-time}
+    SemanticActivationInput:
+      type: object
+      additionalProperties: false
+      required: [enabled, confirmHumanReview, reason]
+      properties:
+        enabled: {type: boolean}
+        confirmHumanReview: {type: boolean}
+        reason: {type: string, minLength: 1, maxLength: 1000}
+        semanticAttemptLimit: {type: integer, minimum: 1, maximum: 100000}
+    TelegramReport:
+      type: object
+      required: [id, reportText, sourceUrl, status, createdAt]
+      properties:
+        id: {type: string, format: uuid}
+        reportText: {type: string}
+        sourceUrl: {type: [string, "null"]}
+        status: {type: string, enum: [new, reviewed, accepted, rejected]}
+        createdAt: {type: string, format: date-time}
+    TelegramReportStatusInput:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {type: string, enum: [reviewed, accepted, rejected]}
+    TelegramLinkResult:
+      type: object
+      required: [deepLink, active]
+      properties:
+        deepLink: {type: [string, "null"]}
+        active: {type: boolean}
+    TelegramWebhookUpdate:
+      type: object
+      required: [update_id]
+      properties:
+        update_id: {type: integer, minimum: 0}
+        message:
+          type: object
+          properties:
+            text: {type: string, maxLength: 4000}
+            chat:
+              type: object
+              properties:
+                id: {type: integer}
+                type: {type: string}
+            from:
+              type: object
+              properties:
+                id: {type: integer}
+          additionalProperties: true
+      additionalProperties: true
+    TelegramWebhookAck:
+      type: object
+      required: [ok]
+      properties:
+        ok: {type: boolean}
+  pathItems:
+    Records:
+      parameters: [{name: institutionId, in: path, required: true, schema: {type: string, format: uuid}}]
+      get:
+        operationId: getWorkspaceRecords
+        tags: [institutions]
+        responses:
+          "200": {description: Active server-persisted manual records for the authorized institution, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspaceRecords"}}}}
+          "401": {description: Authentication required}
+          "403": {description: Membership required}
+    References:
+      parameters: [{name: institutionId, in: path, required: true, schema: {type: string, format: uuid}}]
+      post:
+        operationId: createWorkspaceReference
+        tags: [institutions]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspaceReferenceInput"}}}}
+        responses:
+          "201": {description: User-recorded unverified reference, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspaceReference"}}}}
+          "400": {description: Invalid input}
+          "403": {description: Role denied}
+    Reference:
+      parameters:
+        - {name: institutionId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: referenceId, in: path, required: true, schema: {type: string, format: uuid}}
+      patch:
+        operationId: updateWorkspaceReference
+        tags: [institutions]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspaceReferenceInput"}}}}
+        responses:
+          "200": {description: New immutable content version, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspaceReference"}}}}
+          "409": {description: Stale version; draft not written}
+      delete:
+        operationId: archiveWorkspaceReference
+        tags: [institutions]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspaceArchiveInput"}}}}
+        responses:
+          "200": {description: Archived without deleting historical evidence, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspaceArchiveResult"}}}}
+          "409": {description: Stale version}
+    Posts:
+      parameters: [{name: institutionId, in: path, required: true, schema: {type: string, format: uuid}}]
+      post:
+        operationId: createWorkspacePost
+        tags: [institutions]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspacePostInput"}}}}
+        responses:
+          "201": {description: Manually recorded post; never fetched or certified, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspacePost"}}}}
+          "400": {description: Invalid input}
+          "403": {description: Role denied}
+    Post:
+      parameters:
+        - {name: institutionId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: postId, in: path, required: true, schema: {type: string, format: uuid}}
+      patch:
+        operationId: updateWorkspacePost
+        tags: [institutions]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspacePostInput"}}}}
+        responses:
+          "200": {description: Replacement observation; original preserved for history, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspacePost"}}}}
+          "409": {description: Stale version}
+      delete:
+        operationId: archiveWorkspacePost
+        tags: [institutions]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspaceArchiveInput"}}}}
+        responses:
+          "200": {description: Archived observation, content: {application/json: {schema: {$ref: "#/components/schemas/WorkspaceArchiveResult"}}}}
+          "409": {description: Stale version}
+    Activation:
+      parameters: [{name: institutionId, in: path, required: true, schema: {type: string, format: uuid}}]
+      patch:
+        operationId: updateSemanticActivation
+        tags: [semantic]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/SemanticActivationInput"}}}}
+        responses:
+          "200": {description: Explicit administrator decision; no jobs created, content: {application/json: {schema: {$ref: "./phase2a.openapi.yaml#/components/schemas/SemanticCapabilities"}}}}
+          "403": {description: Administrator required}
+          "503": {description: Provider not ready}
+    TelegramLink:
+      parameters: [{name: institutionId, in: path, required: true, schema: {type: string, format: uuid}}]
+      get:
+        operationId: getTelegramLink
+        tags: [telegram]
+        responses:
+          "200": {description: Link status; secret link is not returned by GET, content: {application/json: {schema: {$ref: "#/components/schemas/TelegramLinkResult"}}}}
+      post:
+        operationId: rotateTelegramLink
+        tags: [telegram]
+        responses:
+          "200": {description: New shareable public link, content: {application/json: {schema: {$ref: "#/components/schemas/TelegramLinkResult"}}}}
+      delete:
+        operationId: revokeTelegramLink
+        tags: [telegram]
+        responses:
+          "200": {description: Link revoked, content: {application/json: {schema: {$ref: "#/components/schemas/TelegramLinkResult"}}}}
+    TelegramReports:
+      parameters: [{name: institutionId, in: path, required: true, schema: {type: string, format: uuid}}]
+      get:
+        operationId: listTelegramReports
+        tags: [telegram]
+        responses:
+          "200": {description: This institution's private Telegram report inbox, content: {application/json: {schema: {type: array, items: {$ref: "#/components/schemas/TelegramReport"}}}}}
+    TelegramReport:
+      parameters:
+        - {name: institutionId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: reportId, in: path, required: true, schema: {type: string, format: uuid}}
+      patch:
+        operationId: updateTelegramReportStatus
+        tags: [telegram]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/TelegramReportStatusInput"}}}}
+        responses:
+          "200": {description: Human-reviewed report status, content: {application/json: {schema: {$ref: "#/components/schemas/TelegramReport"}}}}
+    TelegramWebhook:
+      parameters:
+        - {name: X-Telegram-Bot-Api-Secret-Token, in: header, required: true, schema: {type: string}}
+      post:
+        operationId: receiveTelegramWebhook
+        tags: [telegram]
+        requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/TelegramWebhookUpdate"}}}}
+        responses:
+          "200": {description: Update accepted or safely ignored, content: {application/json: {schema: {$ref: "#/components/schemas/TelegramWebhookAck"}}}}
+          "401": {description: Invalid webhook secret}
+          "503": {description: Webhook secret is not configured}
